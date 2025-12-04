@@ -3,14 +3,14 @@ import * as vscode from 'vscode';
 import { activate } from '../../../extension';
 import { PatchPanel } from '../../../PatchPanel';
 import { applyPatch, parsePatch } from '../../../applyPatch';
-import { createTempBranch } from '../../../git';
+import { createTempBranch } from '../../../gitSecure';
 import { WELL_FORMED_DIFF } from '../../fixtures/sample-diffs';
 
 // Mock dependencies
 jest.mock('vscode');
 jest.mock('../../../PatchPanel');
 jest.mock('../../../applyPatch');
-jest.mock('../../../git');
+jest.mock('../../../gitSecure');
 jest.mock('../../../telemetry', () => ({
   initTelemetry: jest.fn().mockResolvedValue(undefined),
   trackEvent: jest.fn()

@@ -5,6 +5,7 @@
 import * as vscode from 'vscode';
 import * as simpleGit from 'simple-git';
 import { trackEvent } from './telemetry';
+import { getGitOutputChannel } from './logger'; 
 
 /**
  * Error class for Git-related errors
@@ -49,8 +50,9 @@ export async function isGitAvailable(): Promise<boolean> {
     return true;
   } catch (error) {
     // Create output channel for logging errors
-    const output = vscode.window.createOutputChannel('PatchPilot Git');
-    output.appendLine(`Error checking Git availability: ${error instanceof Error ? error.message : String(error)}`);
+    //const output = vscode.window.createOutputChannel('PatchPilot Git');
+    //output.appendLine(`Error checking Git availability: ${error instanceof Error ? error.message : String(error)}`);
+    getGitOutputChannel().appendLine(`Error checking Git availability: ${error instanceof Error ? error.message : String(error)}`);
     return false;
   }
 }
@@ -72,8 +74,9 @@ export async function autoStageFiles(filePaths: string[]): Promise<void> {
     // Confirm with message
     vscode.window.showInformationMessage(`Staged ${filePaths.length} file(s) to Git.`);
   } catch (error) {
-    const output = vscode.window.createOutputChannel('PatchPilot Git');
-    output.appendLine(`Error staging files: ${error instanceof Error ? error.message : String(error)}`);
+    //const output = vscode.window.createOutputChannel('PatchPilot Git');
+    //output.appendLine(`Error staging files: ${error instanceof Error ? error.message : String(error)}`);
+    getGitOutputChannel().appendLine(`Error staging files: ${error instanceof Error ? error.message : String(error)}`);
     throw new GitError(`Failed to stage files: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
@@ -119,8 +122,9 @@ export async function createTempBranch(branchName?: string): Promise<string> {
     
     return branch;
   } catch (error) {
-    const output = vscode.window.createOutputChannel('PatchPilot Git');
-    output.appendLine(`Error creating branch: ${error instanceof Error ? error.message : String(error)}`);
+    //const output = vscode.window.createOutputChannel('PatchPilot Git');
+    //output.appendLine(`Error creating branch: ${error instanceof Error ? error.message : String(error)}`);
+    getGitOutputChannel().appendLine(`Error creating branch: ${error instanceof Error ? error.message : String(error)}`);
     throw new GitError(`Failed to create branch: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
@@ -144,8 +148,9 @@ export async function hasUncommittedChanges(): Promise<boolean> {
       status.renamed.length > 0
     );
   } catch (error) {
-    const output = vscode.window.createOutputChannel('PatchPilot Git');
-    output.appendLine(`Error checking for uncommitted changes: ${error instanceof Error ? error.message : String(error)}`);
+    //const output = vscode.window.createOutputChannel('PatchPilot Git');
+    //output.appendLine(`Error checking for uncommitted changes: ${error instanceof Error ? error.message : String(error)}`);
+    getGitOutputChannel().appendLine(`Error checking for uncommitted changes: ${error instanceof Error ? error.message : String(error)}`);
     return false;
   }
 }
@@ -163,8 +168,9 @@ export async function getCurrentBranch(): Promise<string | undefined> {
     
     return branch;
   } catch (error) {
-    const output = vscode.window.createOutputChannel('PatchPilot Git');
-    output.appendLine(`Error getting current branch: ${error instanceof Error ? error.message : String(error)}`);
+    //const output = vscode.window.createOutputChannel('PatchPilot Git');
+    //output.appendLine(`Error getting current branch: ${error instanceof Error ? error.message : String(error)}`);
+    getGitOutputChannel().appendLine(`Error getting current branch: ${error instanceof Error ? error.message : String(error)}`);
     return undefined;
   }
 }
@@ -194,8 +200,9 @@ export async function createCommit(message: string): Promise<string | undefined>
     
     return result.commit;
   } catch (error) {
-    const output = vscode.window.createOutputChannel('PatchPilot Git');
-    output.appendLine(`Error creating commit: ${error instanceof Error ? error.message : String(error)}`);
+    //const output = vscode.window.createOutputChannel('PatchPilot Git');
+    //output.appendLine(`Error creating commit: ${error instanceof Error ? error.message : String(error)}`);
+    getGitOutputChannel().appendLine(`Error creating commit: ${error instanceof Error ? error.message : String(error)}`);
     throw new GitError(`Failed to create commit: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
@@ -213,8 +220,9 @@ export async function getLastCommitFiles(): Promise<string[]> {
     
     return result.split('\n').filter(line => line.trim() !== '');
   } catch (error) {
-    const output = vscode.window.createOutputChannel('PatchPilot Git');
-    output.appendLine(`Error getting last commit files: ${error instanceof Error ? error.message : String(error)}`);
+    //const output = vscode.window.createOutputChannel('PatchPilot Git');
+    //output.appendLine(`Error getting last commit files: ${error instanceof Error ? error.message : String(error)}`);
+    getGitOutputChannel().appendLine(`Error getting last commit files: ${error instanceof Error ? error.message : String(error)}`);
     return [];
   }
 }

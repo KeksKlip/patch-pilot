@@ -7,6 +7,7 @@ import { simpleGit, SimpleGit } from 'simple-git';
 import * as cp from 'child_process';
 import { promisify } from 'util';
 import { trackEvent } from './telemetry';
+import { getGitOutputChannel } from './logger';
 import {
   isValidBranchName,
   sanitizeBranchName,
@@ -115,8 +116,7 @@ async function getGitInstance(options?: GitOptions): Promise<SimpleGit> {
   }
   
   // Create output channel if needed
-  const outputChannel = options?.outputChannel || 
-                        vscode.window.createOutputChannel('PatchPilot Git');
+  const outputChannel = options?.outputChannel || getGitOutputChannel();
   
   try {
     // Initialize Git in the first workspace folder
@@ -163,8 +163,7 @@ async function getGitInstance(options?: GitOptions): Promise<SimpleGit> {
  * @returns Detection result with Git details
  */
 export async function detectGit(options?: GitOptions): Promise<GitDetectionResult> {
-  const outputChannel = options?.outputChannel || 
-                        vscode.window.createOutputChannel('PatchPilot Git');
+  const outputChannel = options?.outputChannel || getGitOutputChannel();
   
   // Get workspace folders
   const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -244,8 +243,7 @@ export async function isGitAvailable(options?: GitOptions): Promise<boolean> {
     return result.isGitRepo;
   } catch (_error) {
     // Create output channel for logging errors
-    const outputChannel = options?.outputChannel || 
-                          vscode.window.createOutputChannel('PatchPilot Git');
+    const outputChannel = options?.outputChannel || getGitOutputChannel();
     outputChannel.appendLine(`Error checking Git availability: ${_error instanceof Error ? _error.message : 'Unknown error'}`);
     return false;
   }
@@ -264,8 +262,7 @@ export async function autoStageFiles(
   trackEvent('git_action', { action: 'autoStage', fileCount: filePaths.length });
   
   // Create output channel
-  const outputChannel = options?.outputChannel || 
-                        vscode.window.createOutputChannel('PatchPilot Git');
+  const outputChannel = options?.outputChannel || getGitOutputChannel();
   
   // Check if filePaths is an array
   if (!Array.isArray(filePaths)) {
@@ -343,8 +340,7 @@ export async function createTempBranch(
   trackEvent('git_action', { action: 'createBranch' });
   
   // Create output channel
-  const outputChannel = options?.outputChannel || 
-                        vscode.window.createOutputChannel('PatchPilot Git');
+  const outputChannel = options?.outputChannel || getGitOutputChannel();
   
   // Generate or validate branch name
   let actualBranchName: string;
@@ -451,8 +447,7 @@ export async function createTempBranch(
  */
 export async function getGitStatus(options?: GitOptions): Promise<GitStatus> {
   // Create output channel
-  const outputChannel = options?.outputChannel || 
-                        vscode.window.createOutputChannel('PatchPilot Git');
+  const outputChannel = options?.outputChannel || getGitOutputChannel();
   
   try {
     const git = await getGitInstance({ ...options, outputChannel });
@@ -624,8 +619,7 @@ export async function createCommit(
   trackEvent('git_action', { action: 'commit' });
   
   // Create output channel
-  const outputChannel = options?.outputChannel || 
-                        vscode.window.createOutputChannel('PatchPilot Git');
+  const outputChannel = options?.outputChannel || getGitOutputChannel();
   
   // Validate message type
   if (typeof message !== 'string') {
@@ -725,8 +719,7 @@ export async function createCommit(
  */
 export async function getLastCommitFiles(options?: GitOptions): Promise<string[]> {
   // Create output channel
-  const outputChannel = options?.outputChannel || 
-                        vscode.window.createOutputChannel('PatchPilot Git');
+  const outputChannel = options?.outputChannel || getGitOutputChannel();
   
   try {
     const git = await getGitInstance({ ...options, outputChannel });

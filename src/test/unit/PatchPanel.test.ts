@@ -16,6 +16,13 @@ jest.mock('../../utilities', () => ({
   getNonce: jest.fn().mockReturnValue('mock-nonce')
 }));
 
+// Mock logger to capture output
+jest.mock('../../logger', () => ({
+  getMainOutputChannel: jest.fn(),
+  getGitOutputChannel: jest.fn(),
+  log: jest.fn()
+}));
+
 describe('PatchPanel', () => {
   let extensionUri: vscode.Uri;
   let mockWebviewPanel: any;
@@ -63,7 +70,10 @@ describe('PatchPanel', () => {
       show: jest.fn(),
       dispose: jest.fn()
     };
-    (vscode.window.createOutputChannel as jest.Mock).mockReturnValue(mockOutputChannel);
+    
+    // Setup logger mock to return our mock channel
+    const logger = require('../../logger');
+    logger.getMainOutputChannel.mockReturnValue(mockOutputChannel);
      
     // Mock URI joinPath
     (vscode.Uri.joinPath as jest.Mock).mockImplementation((uri, ...paths) => {

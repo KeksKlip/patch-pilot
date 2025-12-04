@@ -5,6 +5,7 @@
 import * as vscode from 'vscode';
 import { applyPatch, parsePatch } from './applyPatch';
 import { getNonce, isUnifiedDiff } from './utilities';
+import { getMainOutputChannel } from './logger';
 import { trackEvent } from './telemetry';
 import { ApplyResult, FileInfo } from './types/patchTypes';
 
@@ -40,7 +41,6 @@ export class PatchPanel {
   private readonly _panel: vscode.WebviewPanel;
   private readonly _extensionUri: vscode.Uri;
   private _disposables: vscode.Disposable[] = [];
-  private _outputChannel: vscode.OutputChannel;
   
   /**
    * Creates or shows the patch panel
@@ -88,7 +88,6 @@ export class PatchPanel {
   private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri) {
     this._panel = panel;
     this._extensionUri = extensionUri;
-    this._outputChannel = vscode.window.createOutputChannel('PatchPilot');
     
     this._update();
     
@@ -103,7 +102,7 @@ export class PatchPanel {
     this._panel.webview.onDidReceiveMessage(
       async (message: WebviewMessage) => {
         try {
-          this._outputChannel.appendLine(`Received message: ${JSON.stringify(message)}`);
+          getMainOutputChannel().appendLine(`Received message: ${JSON.stringify(message)}`);
           
           switch (message.command) {
             case 'applyPatch':
@@ -122,10 +121,10 @@ export class PatchPanel {
               await this._handleCheckClipboard();
               break;
             default:
-              this._outputChannel.appendLine(`Unknown message command: ${message.command}`);
+              getMainOutputChannel().appendLine(`Unknown message command: ${message.command}`);
           }
         } catch (error) {
-          this._outputChannel.appendLine(`Error handling message: ${error instanceof Error ? error.message : String(error)}`);
+          getMainOutputChannel().appendLine(`Error handling message: ${error instanceof Error ? error.message : String(error)}`);
           vscode.window.showErrorMessage(`Operation failed: ${error instanceof Error ? error.message : String(error)}`);
         }
       },
@@ -185,15 +184,16 @@ export class PatchPanel {
       } else {
         vscode.window.showWarningMessage(`Applied ${successCount} patch(es), ${failCount} failed. Check output for details.`);
         
-        this._outputChannel.appendLine(`--- PatchPilot Results (${new Date().toLocaleString()}) ---`);
+        const output = getMainOutputChannel();
+        output.appendLine(`--- PatchPilot Results (${new Date().toLocaleString()}) ---`);
         results.forEach((result: ApplyResult) => {
           if (result.status === 'failed') {
-            this._outputChannel.appendLine(`❌ ${result.file}: ${result.reason || 'Unknown error'}`);
+            output.appendLine(`❌ ${result.file}: ${result.reason || 'Unknown error'}`);
           } else {
-            this._outputChannel.appendLine(`✅ ${result.file} (${result.strategy || 'unknown strategy'})`);
+            output.appendLine(`✅ ${result.file} (${result.strategy || 'unknown strategy'})`);
           }
         });
-        this._outputChannel.show();
+        output.show();
       }
       
       trackEvent('patch_applied', { 
@@ -291,7 +291,7 @@ export class PatchPanel {
         trackEvent('clipboard_check', { containsDiff: false });
       }
     } catch (err) {
-      this._outputChannel.appendLine(`Error reading clipboard: ${err instanceof Error ? err.message : String(err)}`);
+      getMainOutputChannel().appendLine(`Error reading clipboard: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
   

@@ -6,7 +6,7 @@ jest.setTimeout(15000);
 import * as vscodeTypes from 'vscode';
 
 // Mock VS Code API since we can't import it directly in tests
-const mockVSCode = {
+const mockVSCode: any = {
   // VS Code enums
   ExtensionKind: {
     UI: 1,
@@ -202,7 +202,7 @@ const mockVSCode = {
         toString: jest.fn(() => uriString)
       };
     }),
-    joinPath: jest.fn((baseUri, ...pathSegments) => {
+    joinPath: jest.fn((baseUri, ...pathSegments): any => {
       // Get the base path, handling the case where baseUri could be a string or URI object
       const basePath = typeof baseUri === 'string' 
         ? baseUri 
@@ -347,6 +347,7 @@ const mockVSCode = {
     fs: {
       readFile: jest.fn(() => Promise.resolve(Buffer.from(''))),
       writeFile: jest.fn(() => Promise.resolve()),
+      createDirectory: jest.fn(() => Promise.resolve()),
       stat: jest.fn(() => Promise.resolve({ type: 1 }))
     },
     asRelativePath: jest.fn(p => typeof p === 'string' ? p : p.fsPath || ''),

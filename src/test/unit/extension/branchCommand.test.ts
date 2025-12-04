@@ -1,12 +1,12 @@
 // src/test/unit/extension/branchCommand.test.ts
 
 import * as vscode from 'vscode';
-import { createTempBranch } from '../../../git';
+import { createTempBranch } from '../../../gitSecure';
 import { trackEvent } from '../../../telemetry';
 
 // Mock external dependencies
 jest.mock('vscode');
-jest.mock('../../../git', () => ({
+jest.mock('../../../gitSecure', () => ({
   createTempBranch: jest.fn().mockResolvedValue('test-branch'),
   isGitAvailable: jest.fn().mockResolvedValue(true)
 }));

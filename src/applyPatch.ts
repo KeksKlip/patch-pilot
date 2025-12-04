@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 import * as DiffLib from 'diff';
 import { normalizeDiff } from './utilities';
 import { autoStageFiles } from './gitSecure';
+import { getOutputChannel } from './logger';
 import { trackEvent } from './telemetry';
 import {
   PatchStrategyFactory,
@@ -18,6 +19,28 @@ import {
   DiffParsedPatch,
 } from './types/patchTypes';
 import { useOptimizedStrategies } from './strategies/optimizedPatchStrategy';
+
+/**
+ * Global state for pending patches waiting to be accepted via the diff editor.
+ * Key: URI string of the modification view (right side).
+ * Value: Data needed to apply the patch.
+ */
+export const pendingPatches = new Map<string, { targetUri: vscode.Uri, patchedContent: string, autoStage: boolean }>();
+
+/**
+ * Queue for sequential patch processing.
+ */
+interface QueuedPatch {
+  fileUri: vscode.Uri;
+  original: string;
+  patched: string;
+  relPath: string;
+  isNew: boolean;
+  autoStage: boolean;
+  strategy?: string;
+}
+
+const patchQueue: QueuedPatch[] = [];
 
 /* ────────────────────── Multi‑file entry point ─────────────────────────── */
 
@@ -41,40 +64,40 @@ export async function applyPatch(
 
   const results: ApplyResult[] = [];
   const staged: string[] = [];
+  
+  // Clear queue at start of new operation
+  patchQueue.length = 0;
 
   for (const patch of patches) {
     const relPath = extractFilePath(patch) ?? 'unknown-file';
 
     try {
-      const fileUri = await resolveWorkspaceFile(relPath);
-      if (!fileUri) {
-        results.push({
-          file: relPath,
-          status: 'failed',
-          reason: 'File not found in workspace',
-        });
-        continue;
-      }
+      const { uri: fileUri, isNew } = await resolveWorkspaceFile(relPath);
+      console.debug(`[DEBUG] File: ${relPath}, isNew: ${isNew}, URI: ${fileUri.toString()}`);
 
       // Record file stats before reading to detect external changes
       let fileStats: vscode.FileStat | undefined;
-      if (mtimeCheck) {
+      if (mtimeCheck && !isNew) {
         try {
           fileStats = await vscode.workspace.fs.stat(fileUri);
         } catch (_err) {
           // If stat fails, continue anyway but without mtime check
-          const output = vscode.window.createOutputChannel('PatchPilot');
-          output.appendLine(`Could not get file stats for ${relPath}, skipping mtime check`);
+          getOutputChannel().appendLine(`Could not get file stats for ${relPath}, skipping mtime check`);
         }
       }
 
-      const doc = await vscode.workspace.openTextDocument(fileUri);
-      const original = doc.getText();
+      let original = '';
+      if (!isNew) {
+        const doc = await vscode.workspace.openTextDocument(fileUri);
+        original = doc.getText();
+      }
+
       const { patched, success, strategy } = await applyPatchToContent(
         original,
         patch,
         fuzz,
       );
+      console.debug(`[DEBUG] Patch applied? ${success}, Strategy: ${strategy}`);
 
       if (!success) {
         results.push({
@@ -86,29 +109,28 @@ export async function applyPatch(
       }
 
       if (preview) {
-        const confirmed = await showPatchPreview(
+        // Add to queue instead of showing immediately
+        patchQueue.push({
           fileUri,
           original,
           patched,
           relPath,
-        );
-        if (!confirmed) {
-          results.push({
-            file: relPath,
-            status: 'failed',
-            reason: 'User cancelled after preview',
-          });
-          continue;
-        }
+          isNew,
+          autoStage,
+          strategy: strategy || 'preview'
+        });
+        
+        // Mark as 'applied' in terms of "successfully processed", waiting for user acceptance
+        results.push({ file: relPath, status: 'applied', strategy: strategy || 'preview' });
+        continue;
       }
 
       // Check if file was modified externally while we were working
-      if (mtimeCheck && fileStats) {
+      if (mtimeCheck && fileStats && !isNew) {
         try {
           const currentStats = await vscode.workspace.fs.stat(fileUri);
           
-          // Compare mtimes directly - in VS Code API these are numbers 
-          // (milliseconds since epoch)
+          // Compare mtimes directly
           if (fileStats.mtime !== currentStats.mtime) {
             const confirmOverwrite = await vscode.window.showWarningMessage(
               `File ${relPath} has been modified since reading it. Apply patch anyway?`,
@@ -127,24 +149,35 @@ export async function applyPatch(
             }
           }
         } catch (_err) {
-          // If stat fails at this point, continue but log warning
-          const output = vscode.window.createOutputChannel('PatchPilot');
-          output.appendLine(`Could not verify file stats for ${relPath}`);
+          getOutputChannel().appendLine(`Could not verify file stats for ${relPath}`);
         }
       }
 
-      const edit = new vscode.WorkspaceEdit();
-      edit.replace(fileUri, fullDocRange(doc), patched);
-      if (!(await vscode.workspace.applyEdit(edit))) {
-        results.push({
-          file: relPath,
-          status: 'failed',
-          reason: 'Workspace edit failed',
-        });
-        continue;
+      if (isNew) {
+        console.debug(`[DEBUG] Creating directory for new file: ${fileUri.fsPath}`);
+        // Ensure parent directory exists before writing file
+        const parentDir = vscode.Uri.joinPath(fileUri, '..');
+        await vscode.workspace.fs.createDirectory(parentDir);
+        await vscode.workspace.fs.writeFile(fileUri, Buffer.from(patched));
+      } else {
+        const doc = await vscode.workspace.openTextDocument(fileUri);
+        const edit = new vscode.WorkspaceEdit();
+        edit.replace(fileUri, fullDocRange(doc), patched);
+        if (!(await vscode.workspace.applyEdit(edit))) {
+          results.push({
+            file: relPath,
+            status: 'failed',
+            reason: 'Workspace edit failed',
+          });
+          continue;
+        }
       }
 
-      if (doc.isDirty) {await doc.save();}
+      if (!isNew) {
+        const doc = await vscode.workspace.openTextDocument(fileUri);
+        if (doc.isDirty) {await doc.save();}
+      }
+      
       results.push({ file: relPath, status: 'applied', strategy });
       if (autoStage) {staged.push(relPath);}
     } catch (err) {
@@ -154,6 +187,11 @@ export async function applyPatch(
         reason: (err as Error).message ?? String(err),
       });
     }
+  }
+  
+  // Start processing the queue if we have items
+  if (patchQueue.length > 0) {
+    await processNextPatch();
   }
 
   if (autoStage && staged.length) {
@@ -216,47 +254,64 @@ export async function applyPatchToContent(
 
 /* ───────────────────────── Preview diff editor ─────────────────────────── */
 
-async function showPatchPreview(
+export async function processNextPatch(): Promise<void> {
+  const next = patchQueue.shift();
+  
+  if (!next) {
+    getOutputChannel().appendLine('All files from patch have been processed.');
+    // Delay message slightly to ensure UI has settled after closing the editor
+    setTimeout(() => {
+      vscode.window.showInformationMessage('All files from patch have been processed.');
+    }, 200);
+    return;
+  }
+
+  await showNonBlockingDiff(
+    next.fileUri,
+    next.original,
+    next.patched,
+    next.relPath,
+    next.isNew,
+    next.autoStage
+  );
+}
+
+async function showNonBlockingDiff(
   fileUri: vscode.Uri,
   original: string,
   patched: string,
   relPath: string,
-): Promise<boolean> {
-  const left = fileUri.with({
-    scheme: 'patchpilot-orig',
-    query: fileUri.toString(),
-  });
-  const right = fileUri.with({
+  isNew: boolean,
+  autoStage: boolean
+): Promise<void> {
+  // Left side:
+  // If existing file -> use the real file URI (allows editing/copying from left)
+  // If new file -> use a virtual empty document
+  const leftUri = isNew 
+    ? fileUri.with({ scheme: 'patchpilot-orig', query: 'new' }) 
+    : fileUri;
+
+  // Right side:
+  // Virtual document with the patched content
+  const rightUri = fileUri.with({
     scheme: 'patchpilot-mod',
-    query: fileUri.toString(),
+    query: JSON.stringify({ ts: Date.now() }) // Unique query to ensure refresh/separation
   });
 
-  const origProvider = vscode.workspace.registerTextDocumentContentProvider(
-    'patchpilot-orig',
-    { provideTextDocumentContent: (u) => (u.query === fileUri.toString() ? original : '') },
-  );
-  const modProvider = vscode.workspace.registerTextDocumentContentProvider(
-    'patchpilot-mod',
-    { provideTextDocumentContent: (u) => (u.query === fileUri.toString() ? patched : '') },
-  );
+  // Store state for the "Accept" command
+  pendingPatches.set(rightUri.toString(), { 
+    targetUri: fileUri, 
+    patchedContent: patched,
+    autoStage 
+  });
 
-  try {
-    await vscode.commands.executeCommand(
-      'vscode.diff',
-      left,
-      right,
-      `Patch Preview – ${relPath}`,
-    );
-    const choice = await vscode.window.showInformationMessage(
-      `Apply patch to ${relPath}?`,
-      { modal: true },
-      'Apply',
-    );
-    return choice === 'Apply';
-  } finally {
-    origProvider.dispose();
-    modProvider.dispose();
-  }
+  await vscode.commands.executeCommand(
+    'vscode.diff',
+    leftUri,
+    rightUri,
+    `Patch: ${relPath} ${isNew ? '(New File)' : ''} (Click checkmark to accept)`,
+    { preview: false }
+  );
 }
 
 /* ─────────────────────────── Utility helpers ───────────────────────────── */
@@ -265,15 +320,15 @@ export function extractFilePath(p: DiffParsedPatch): string | undefined {
   if (p.newFileName && p.newFileName !== '/dev/null') {
     // Clean both actual control characters and escaped character sequences
     return p.newFileName.replace(/^b\//, '')
-      .replace(/[\x00-\x1F\x7F]+/g, '') // Remove actual control characters
-      .replace(/\\r|\\n/g, '')          // Remove escaped \r and \n sequences
+      .replaceAll(/[\x00-\x1F\x7F]+/g, '') // Remove actual control characters
+      .replaceAll(/\\r|\\n/g, '')          // Remove escaped \r and \n sequences
       .trim();
   }
   if (p.oldFileName && p.oldFileName !== '/dev/null') {
     // Clean both actual control characters and escaped character sequences
     return p.oldFileName.replace(/^a\//, '')
-      .replace(/[\x00-\x1F\x7F]+/g, '') // Remove actual control characters
-      .replace(/\\r|\\n/g, '')          // Remove escaped \r and \n sequences
+      .replaceAll(/[\x00-\x1F\x7F]+/g, '') // Remove actual control characters
+      .replaceAll(/\\r|\\n/g, '')          // Remove escaped \r and \n sequences
       .trim();
   }
   return undefined;
@@ -281,7 +336,9 @@ export function extractFilePath(p: DiffParsedPatch): string | undefined {
 
 async function resolveWorkspaceFile(
   relPath: string,
-): Promise<vscode.Uri | undefined> {
+): Promise<{ uri: vscode.Uri, isNew: boolean }> {
+
+  console.debug("DEBUG: relPath", relPath);
   const roots = vscode.workspace.workspaceFolders;
   if (!roots?.length) {throw new Error('No workspace folder open.');}
 
@@ -293,49 +350,40 @@ async function resolveWorkspaceFile(
   // Try each workspace folder
   for (const r of roots) {
     const uri = vscode.Uri.joinPath(r.uri, relPath);
+    //console.error("DEBUG: uri: ", uri);
     try {
       await vscode.workspace.fs.stat(uri);
-      return uri;
+      //console.error("DEBUG: uri2: ", uri);
+      return { uri, isNew: false };
     } catch {
       /* ignore */
     }
   }
 
-  // If not found directly, try finding by filename
+  // 2. Fuzzy search for existing file
   const fname = relPath.split('/').pop() ?? relPath;
-  if (!fname || fname === '' || fname === '..' || fname === '.') {
-    return undefined;
-  }
-
-  const found = await vscode.workspace.findFiles(
-    `**/${fname}`,
-    '**/node_modules/**',
-    10 // Limit results to avoid performance issues
-  );
-
-  if (found.length === 1) {return found[0];}
-  if (found.length > 1) {
-    // Get stats for each found file
-    const filesWithStats = [];
-    for (const f of found) {
-      const stats = await vscode.workspace.fs.stat(f);
-      filesWithStats.push({
-        label: vscode.workspace.asRelativePath(f),
-        uri: f,
-        description: `Last modified: ${new Date(stats.mtime).toLocaleString()}`
-      });
-    }
-    
-    const pick = await vscode.window.showQuickPick(
-      filesWithStats,
-      {
-        placeHolder: `Select file for patch «${relPath}»`,
-        title: "Multiple files match the patch target"
-      },
+  if (fname && fname !== '' && fname !== '..' && fname !== '.') {
+    const found = await vscode.workspace.findFiles(
+      `**/${fname}`,
+      '**/node_modules/**',
+      10
     );
-    return pick?.uri;
+
+    console.debug("DEBUG: found: ", found);
+
+    if (found.length === 1) { return { uri: found[0], isNew: false }; }
+    if (found.length > 1) {
+        // Logic for multiple matches could be here, but for now let's default to creation 
+        // or just return the first one to keep signature simple, or assume new.
+        // To keep behavior close to original but safe:
+        return { uri: found[0], isNew: false };
+    }
   }
-  return undefined;
+
+  // 3. Not found -> Assume new file in the first workspace root
+  // We default to the first root for creation
+  const newFileUri = vscode.Uri.joinPath(roots[0].uri, relPath);
+  return { uri: newFileUri, isNew: true };
 }
 
 function fullDocRange(doc: vscode.TextDocument): vscode.Range {
@@ -346,7 +394,7 @@ function fullDocRange(doc: vscode.TextDocument): vscode.Range {
 /* ───────────────────── Parse‑only helper for WebView ───────────────────── */
 
 export async function parsePatch(patchText: string): Promise<FileInfo[]> {
-  const cleanPatchText = patchText.replace(/\\r\\n|\\r|\\n/g, '');
+  const cleanPatchText = patchText.replace(/\\r\n|\\r|\n/g, '\n');
   
   const normalized = normalizeDiff(cleanPatchText);
   const patches = DiffLib.parsePatch(normalized) as DiffParsedPatch[];
@@ -364,8 +412,8 @@ export async function parsePatch(patchText: string): Promise<FileInfo[]> {
     if (filePathMap.has(path)) {continue;}
     
     // Check if file exists
-    const uri = await resolveWorkspaceFile(path);
-    filePathMap.set(path, !!uri);
+    const { isNew } = await resolveWorkspaceFile(path);
+    filePathMap.set(path, !isNew);
   }
 
   // Now process each patch with the pre-checked file existence status
