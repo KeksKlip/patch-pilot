@@ -3,7 +3,7 @@
  * ----------------------------------------------------------------------- */
 
 import * as vscode from 'vscode';
-import { normalizeDiff, normalizeLineEndings } from './utilities';
+import { normalizeDiff, normalizeLineEndings, adjustHunkHeaders } from './utilities';
 import { autoStageFiles } from './git';
 import { getOutputChannel } from './logger';
 import { trackEvent } from './telemetry';
@@ -37,8 +37,7 @@ export async function applyPatch(
 
   let patches: DiffParsedPatch[];
   if (typeof patchInput === 'string') {
-    const canonical = normalizeDiff(patchInput);
-    patches = parsePatchInternal(canonical);
+    patches = safeParsePatch(patchInput);
   } else {
     patches = patchInput;
   }
@@ -254,9 +253,22 @@ function fullDocRange(doc: vscode.TextDocument): vscode.Range {
 }
 /* ───────────────────── Parsing helpers ─────────────────────────────────── */
 
-export function parseUnifiedDiff(patchText: string): DiffParsedPatch[] {
+/**
+ * Safely parses a patch, attempting to fix malformed hunk headers if standard parsing fails.
+ */
+function safeParsePatch(patchText: string): DiffParsedPatch[] {
   const canonical = normalizeDiff(patchText);
-  return parsePatchInternal(canonical);
+  try {
+    return parsePatchInternal(canonical);
+  } catch (e) {
+    // If parsing fails, try to repair hunk headers (AI often gets counts wrong)
+    const repaired = adjustHunkHeaders(canonical);
+    return parsePatchInternal(repaired);
+  }
+}
+
+export function parseUnifiedDiff(patchText: string): DiffParsedPatch[] {
+  return safeParsePatch(patchText);
 }
 
 // Re-export parsePatch for backward compatibility with tests/extensions
@@ -268,8 +280,7 @@ export { parsePatchInternal as parsePatch };
 export async function parsePatchStats(patchInput: string | DiffParsedPatch[]): Promise<FileInfo[]> {
   let patches: DiffParsedPatch[];
   if (typeof patchInput === 'string') {
-    const normalized = normalizeDiff(patchInput);
-    patches = parsePatchInternal(normalized);
+    patches = safeParsePatch(patchInput);
   } else {
     patches = patchInput;
   }

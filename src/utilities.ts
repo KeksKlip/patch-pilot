@@ -34,7 +34,8 @@ export function autoFixSpaces(diffText: string): string {
     .map(line => {
       // If line is neither a diff header, nor starts with '+', '-', ' ', or '@'
       // then it's likely a context line missing a leading space
-      if (line.trim() !== '' && !/^(\+|-| |@|diff |index |---|\+\+\+|@@)/.test(line)) {
+      // Updated to include common git metadata lines to avoid corrupting them
+      if (line.trim() !== '' && !/^(\+|-| |@|diff |index |---|(\+\+\+)|@@|new file|deleted file|old mode|new mode|similarity index|copy |rename |binary |\\)/.test(line)) {
         return ' ' + line;
       }
       return line;
@@ -72,6 +73,62 @@ export function addMissingHeaders(diffText: string): string {
   }
   
   return diffText;
+}
+
+/**
+ * Adjusts hunk headers (@@ -old,count +new,count @@) to match the actual number of lines in the hunk.
+ * This fixes issues where AI generates incorrect line counts, causing the parser to crash.
+ * @param diffText The diff text to adjust
+ * @returns Diff text with corrected hunk headers
+ */
+export function adjustHunkHeaders(diffText: string): string {
+  const lines = diffText.split('\n');
+  const result: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Regex to match standard hunk headers: @@ -1,2 +3,4 @@
+    // Captures: 1=oldStart, 2=oldLines(opt), 3=newStart, 4=newLines(opt), 5=trailing
+    const match = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/);
+
+    if (match) {
+      let oldLines = 0;
+      let newLines = 0;
+      
+      // Look ahead to count actual lines until the next hunk or file header
+      let j = i + 1;
+      while (j < lines.length) {
+        const nextLine = lines[j];
+        
+        // Stop at next header or hunk
+        if (nextLine.startsWith('diff --git') || nextLine.startsWith('@@ ')) {
+          break;
+        }
+        
+        if (nextLine.startsWith('-')) {
+          oldLines++;
+        } else if (nextLine.startsWith('+')) {
+          newLines++;
+        } else if (nextLine.startsWith(' ')) {
+          oldLines++;
+          newLines++;
+        }
+        // Ignore lines that don't start with +,-,space (metadata or garbage)
+        j++;
+      }
+
+      const oldStart = match[1];
+      const newStart = match[3];
+      const trailing = match[5] || '';
+
+      // Reconstruct header with calculated counts
+      result.push(`@@ -${oldStart},${oldLines} +${newStart},${newLines} @@${trailing}`);
+    } else {
+      result.push(line);
+    }
+  }
+  return result.join('\n');
 }
 
 /**
